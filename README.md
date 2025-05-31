@@ -1,6 +1,5 @@
 ## Environment 
 
-### Create environment 
 ```bash
 mamba env create -f env.yml
 pip install git+https://github.com/microsoft/MOFDiff.git
