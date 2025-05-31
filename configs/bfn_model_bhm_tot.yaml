@@ -1,0 +1,65 @@
+model:
+  time_dim: 128
+  hidden_dim: 256
+  latent_dim: 256
+  fc_num_layers: 1
+  cost_natom: 1.
+  cost_coord: 1 # 10
+  cost_type: 1 # 1.
+  cost_rot: 10.
+  cost_lattice: 1
+  cost_composition: 1.
+  cost_edge: 10.
+  cost_property: 1.
+  beta: 0.01
+  teacher_forcing_lattice: true
+  max_neighbors: 20  
+  radius: 7.  
+  sigma_begin: 0.5
+  sigma_end: 0.005
+  type_sigma_begin: 5.
+  type_sigma_end: 0.01
+  num_noise_level: 50
+  predict_property: true
+
+  T_min: -np.pi
+  T_max: np.pi
+
+  norm_weight: false
+  norm_beta: true
+  rej_samp: false
+
+  n_samples: 1
+
+  BFN:
+    _target_: models.crysbfn_bhm.CrysBFN
+    sigma1_type: 0.03162277660168379
+    beta1_coord: 1e3
+    beta1_rot: 200
+    t_min: 1e-7
+    dtime_loss: true
+    dtime_loss_steps: 50
+    sigma1_lattice: 0.03162277660168379
+    mult_constant: true
+    pred_mean: true
+    end_back: true
+    sim_cir_flow: true
+    cond_acc: ${model.BFN.sim_cir_flow}
+    sch_type: linear
+    disc_prob_loss: false
+    K: 32
+  decoder:
+    _target_: models.cspnet_bfn.CSPNet
+    hidden_dim: 512
+    time_dim: ${model.time_dim}
+    bb_emb_dim: 32
+    num_layers: 6
+    num_freqs: 64
+    max_neighbors: ${model.max_neighbors}
+    cutoff: ${model.radius}
+    ln: true
+    period: ${model.T_max}-${model.T_min}   # 2 * np.pi
+    dtime_loss: ${model.BFN.dtime_loss}
+    cond_acc: ${model.BFN.cond_acc}
+    so3_embedding_type: quat_bhm
+    pred_type: true

@@ -1,0 +1,9 @@
+paths:
+  root_dir: ${oc.env:PROJECT_ROOT}
+  save_dir: ${oc.env:CHECKPOINT_ROOT}
+  log_dir: ${paths.save_dir}/logs/${experiment.wandb.project}/${experiment.wandb.name}
+  wandb_dir: ${paths.save_dir}/logs
+  ckpt_dir: ${paths.log_dir}/ckpt
+  inference_dir: ${paths.log_dir}/inference
+  data_dir: ${oc.env:DATASET_ROOT}
+  data_dng_dir: ${oc.env:DATASET_DNG_ROOT}
