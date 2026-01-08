@@ -1,5 +1,4 @@
 import time
-from crysbfn.common.von_mises_fisher_utils import VonMisesFisher
 from crysbfn.common.bingham_utils import Bingham
 import hydra
 import omegaconf

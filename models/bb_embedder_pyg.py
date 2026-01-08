@@ -7,7 +7,6 @@ from torch_geometric.nn.pool import global_mean_pool
 from data import utils as du
 from models.egnn import E_GCL
 
-import pdb
 
 
 class GaussianSmearing(nn.Module):

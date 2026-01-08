@@ -1,0 +1,5 @@
+- key: vf
+  ori_key_name: void_fraction
+  target_value: 0.5
+  condition_embedding:
+    _target_: models.cspnet_cond.Condition

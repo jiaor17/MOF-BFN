@@ -4,8 +4,8 @@ model:
   latent_dim: 256
   fc_num_layers: 1
   cost_natom: 1.
-  cost_coord: 1.
-  cost_type: 10.
+  cost_coord: 1 # 10
+  cost_type: 10. # 1.
   cost_rot: 10.
   cost_lattice: 1
   cost_composition: 1.
@@ -32,8 +32,8 @@ model:
   n_samples: 1
 
   BFN:
-    _target_: models.crysbfn_csp_bhm.CrysBFN_CSP
-    beta1_type: 0.5
+    _target_: models.crysbfn_bhm_cond.CrysBFN
+    sigma1_type: 0.03162277660168379
     beta1_coord: 1e3
     beta1_rot: 200
     t_min: 1e-7
@@ -47,11 +47,12 @@ model:
     cond_acc: ${model.BFN.sim_cir_flow}
     sch_type: linear
     disc_prob_loss: false
+    K: 32
   decoder:
-    _target_: models.cspnet_bfn.CSPNet
+    _target_: models.cspnet_cond.CSPNet
     hidden_dim: 512
     time_dim: ${model.time_dim}
-    bb_emb_dim: ${model.bb_embedder.c_node_dim}
+    bb_emb_dim: 32
     num_layers: 6
     num_freqs: 64
     max_neighbors: ${model.max_neighbors}
@@ -61,10 +62,5 @@ model:
     dtime_loss: ${model.BFN.dtime_loss}
     cond_acc: ${model.BFN.cond_acc}
     so3_embedding_type: quat_bhm
-  bb_embedder:
-    c_node_dim: 64
-    c_edge_dim: 64
-    c_hidden_dim: 64
-    max_atoms: 100
-    max_radius: 5
-    num_layers: 4
+    pred_type: true
+

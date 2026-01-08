@@ -4,15 +4,11 @@ import torch.nn.functional as F
 from torch.special import i0e, i1e
 from torch_scatter import scatter_mean, scatter_sum
 from tqdm import tqdm
-from torch.distributions import Normal
-from .egnn.egnn_new import EGNN
 import numpy as np
 import hydra
-from absl import logging
 from crysbfn.common.data_utils import (
     EPSILON, _make_global_adjacency_matrix, cart_to_frac_coords, mard, lengths_angles_to_volume,
     frac_to_cart_coords, min_distance_sqr_pbc, remove_mean)
-from crysbfn.common.von_mises_fisher_utils import VonMisesFisher, ive
 from crysbfn.common.bingham_utils import Bingham
 import torch.distributions as D
 import math
@@ -369,81 +365,6 @@ class bfnBase(nn.Module):
     def sample(self):
         raise NotImplementedError
 
-    def dtime4sphere_loss(self, x, x_pred, alpha, p, ignore_weight = False):
-        """
-        x: [N, D]
-        x_pred: [N, D]
-        loss = alpha * (1 - x_pred^T x)
-        """
-        diff = 1 - torch.einsum("bi,bi->b", x, x_pred)
-        # diff2 = 1 - torch.einsum("bi,bi->b", -x, x_pred)
-        # diff = torch.min(diff, diff2)
-        v = p / 2 - 1
-        coef = alpha * ive(v+1,alpha) / ive(v,alpha)
-        if ignore_weight:
-            coef = 1.0
-        loss = coef * diff
-        return loss.mean()
-
-    def sphere_var_bayesian_update(self, loc_prev, conc_prev, alpha_i, pred_x, beta1):
-        scale = alpha_i.repeat(loc_prev.shape[0],1)
-        y_i = VonMisesFisher(loc=pred_x,scale=scale).sample()
-        theta = loc_prev * conc_prev.unsqueeze(-1) + scale * y_i
-        conc = torch.linalg.norm(theta,dim=-1)    
-        loc = theta / conc.unsqueeze(-1)
-        conc = self.sphere_norm_log_conc((conc+self.epsilon).log(),beta1=beta1)
-        return loc, conc
-
-
-    def sphere_var_bayesian_flow_sim(self, x, t_index, beta1, N, epsilon=1e-7):
-        # y,eps = self.vm_heler.sample(loc=x, concentration=beta_t, n_samples=1,ret_eps=True)
-        # y = torch.tensor(scipy.stats.vonmises.rvs(loc=x.cpu().numpy(), kappa=beta_t.cpu().numpy())).cuda()
-        # 使用torch自带的vonmises分布
-        x = x.to(torch.float32)
-        input_shape = x.shape
-        x = x.view(-1, input_shape[-1])
-        n_batch, n_dim = x.shape
-        t_index = t_index.long()
-        t_index = t_index.unsqueeze(0).repeat(1,1,n_dim).view(-1,n_dim)
-        device = x.device
-        alpha_index = self.sphere_alpha_wrt_index(torch.arange(1, N+1).to(device).long(), N, beta1, self.sphere_dim) # [n_steps]
-        alpha = alpha_index.unsqueeze(-1).unsqueeze(-1).repeat(1,n_batch,1) # （n_steps, n_batch, 1)
-        sample_x = x.unsqueeze(0).repeat(alpha.shape[0],1,1).double() # (n_steps,n_batch,dim)
-        torch_vmf = VonMisesFisher(loc=sample_x, scale=alpha.double().clip(float(epsilon)))
-        y = torch_vmf.sample()
-        prior = VonMisesFisher(loc=x.unsqueeze(0),scale=epsilon*torch.ones((1,n_batch,1),device=x.device)).sample()
-        poster_cum = (y * alpha).cumsum(dim=0)
-        posters = torch.cat([prior,poster_cum],dim=0) #[n_steps+1,n_batch,dim]
-        selected_index = (t_index-1).unsqueeze(0)
-        selected_poster = torch.gather(posters, dim=0, index=selected_index).squeeze(0)
-        kappa = torch.functional.norm(selected_poster,dim=-1)
-        mu = torch.nn.functional.normalize(selected_poster, p=2, dim=-1)
-        log_kappa = (kappa+epsilon).log().float()
-        log_kappa[(t_index==1)[:,0]] = torch.log(torch.tensor((epsilon))).to(device)
-        normed_log_conc = self.sphere_norm_log_conc(log_kappa,beta1=beta1,epsilon=epsilon)
-        return mu.view(input_shape).to(torch.float32), normed_log_conc.view(-1).to(torch.float32)
-
-    def sphere_alpha_wrt_index(self, t_index, N, beta1, p):
-        assert (t_index >= 1).all() and (t_index <= N).all()
-        fname = f'./cache_files/sphere_schedules/linear_entropy_alphas_s{int(N)}_beta{int(beta1)}_dim{p}.pt'
-        acc_schedule = torch.load(fname,map_location=t_index.device)
-        return acc_schedule[t_index.long()-1]
-    
-    def sphere_denorm_conc(self, normed_log_conc, beta1, epsilon=1e-7):
-        '''
-        Denormalize logbeta 
-        '''
-        beta1 = torch.tensor(beta1)
-        epsilon = torch.tensor(epsilon)
-        log_conc = normed_log_conc * (torch.log(beta1) - torch.log(epsilon)) + torch.log(epsilon)
-        return log_conc.exp()
-
-    def sphere_norm_log_conc(self, log_kappa, beta1, epsilon=1e-7):
-        '''
-        Normalize logbeta to [0,1]
-        '''
-        return (log_kappa - math.log(epsilon))/(torch.log(beta1) - math.log(epsilon))
-
     def dtime4quat_loss(self, x, x_pred, alpha, p, ignore_weight = False):
         """
         x: [N, D]
@@ -469,17 +390,11 @@ class bfnBase(nn.Module):
         A_post = A_prev + ayy_i
         bhm_post = Bingham(matrix=A_post)
         eigvecs_post, eigvals_post = bhm_post.eigvecs, bhm_post.eigvals
-        # theta = loc_prev * conc_prev.unsqueeze(-1) + scale * y_i
-        # conc = torch.linalg.norm(theta,dim=-1)    
-        # loc = theta / conc.unsqueeze(-1)
         eigvals_post = self.quat_norm_log_eigvals((self.epsilon - eigvals_post).log(),beta1=beta1)
         return eigvecs_post, eigvals_post
 
 
     def quat_var_bayesian_flow_sim(self, x, t_index, beta1, N, epsilon=1e-7):
-        # y,eps = self.vm_heler.sample(loc=x, concentration=beta_t, n_samples=1,ret_eps=True)
-        # y = torch.tensor(scipy.stats.vonmises.rvs(loc=x.cpu().numpy(), kappa=beta_t.cpu().numpy())).cuda()
-        # 使用torch自带的vonmises分布
         x = x.to(torch.float32)
         input_shape = x.shape
         x = x.view(-1, input_shape[-1])

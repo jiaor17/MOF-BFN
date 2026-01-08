@@ -4,8 +4,8 @@ model:
   latent_dim: 256
   fc_num_layers: 1
   cost_natom: 1.
-  cost_coord: 1 # 10
-  cost_type: 1 # 1.
+  cost_coord: 1.
+  cost_type: 10.
   cost_rot: 10.
   cost_lattice: 1
   cost_composition: 1.

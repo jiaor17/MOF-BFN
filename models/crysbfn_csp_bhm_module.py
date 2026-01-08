@@ -180,7 +180,7 @@ class CrysBFN_CSP_PL_Model(BaseModule):
                 show_bar=show_bar,
                 samp_acc_factor=samp_acc_factor,
                 batch = batch,
-                strategy= 'mix',
+                strategy= 'end_back',
                 **kwargs
             )
         if get_rej:
