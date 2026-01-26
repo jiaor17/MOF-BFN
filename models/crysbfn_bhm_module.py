@@ -40,7 +40,6 @@ from pymatgen.core.lattice import Lattice
 from pymatgen.io.cif import CifWriter
 from pymatgen.analysis.structure_matcher import StructureMatcher
 
-
 class CrysBFN_PL_Model(BaseModule):
     def __init__(self, cfg, device) -> None:
         super().__init__()
@@ -100,6 +99,9 @@ class CrysBFN_PL_Model(BaseModule):
             batch.num_atoms
         )
 
+        # start_point = torch.FloatTensor([1,0,0]).to(self.device)
+
+        # rot_vecs = torch.einsum('bij,j->bi', batch.rotmats_1, start_point)
         rot_vecs = matrix_to_quaternion(batch.rotmats_1)
 
         bb_embs = batch.bb_emb_1
@@ -160,22 +162,13 @@ class CrysBFN_PL_Model(BaseModule):
     @torch.no_grad()
     def sample(self, batch, sample_steps=None, segment_ids=None, show_bar=False, samp_acc_factor=1.0, **kwargs):
         sample_batch = batch
-        atom_types = sample_batch.atom_types.to(self.device)
-        local_coords = sample_batch.local_coords.to(self.device)
-        bb_num_vec = sample_batch.bb_num_vec.to(self.device)
         segment_ids = sample_batch.batch.to(self.device)
         num_atoms = sample_batch.num_atoms.to(self.device)
         sample_steps = self.cfg.BFN.dtime_loss_steps if sample_steps is None else sample_steps
         get_rej = False if 'return_traj' not in kwargs else kwargs['return_traj']
 
-        rot_vecs = matrix_to_quaternion(batch.rotmats_1)
-        kwargs['rotquat'] = rot_vecs
-
         sample_res = self.BFN.sample(
-                atom_types,
                 num_atoms,
-                local_coords,
-                bb_num_vec,
                 sample_steps=sample_steps,
                 segment_ids=segment_ids,
                 show_bar=show_bar,
@@ -185,13 +178,11 @@ class CrysBFN_PL_Model(BaseModule):
                 **kwargs
             )
         if get_rej:
-            coord_pred_final, lattice_pred_final, rot_pred_final, traj = sample_res
+            coord_pred_final, lattice_pred_final, rot_pred_final, type_pred_final, traj = sample_res
         else:
-            coord_pred_final, lattice_pred_final, rot_pred_final = sample_res
-
+            coord_pred_final, lattice_pred_final, rot_pred_final, type_pred_final = sample_res
         
         frac_coords = p_helper.any2frac(coord_pred_final,eval(str(self.T_min)),eval(str(self.T_max)))
-
         
         pred_lattice_pre = lattice_pred_final
 
@@ -204,9 +195,12 @@ class CrysBFN_PL_Model(BaseModule):
         pred_lattice = torch.cat([pred_lengths, pred_angles], dim=-1)
 
         pred_rotmat = quaternion_to_matrix(rot_pred_final)
+
+        pred_type = type_pred_final
         
-        output_dict = {'frac_coords': frac_coords, 'lattices': pred_lattice, 'rotmats': pred_rotmat}
+        output_dict = {'frac_coords': frac_coords, 'lattices': pred_lattice, 'rotmats': pred_rotmat, 'types': pred_type, 'num_atoms': num_atoms}
         return output_dict
+
 
     def training_step(self, batch: Any, batch_idx: int) -> torch.Tensor:
 
@@ -326,47 +320,10 @@ class CrysBFN_PL_Model(BaseModule):
 
 
     def predict_step(self, batch, batch_idx):
-        device = f'cuda:{torch.cuda.current_device()}'
-
-        now = time.time()
 
         ret = self.sample(batch, show_bar=True)
 
-        pred_lattice = ret['lattices']
-
-        pred_lengths, pred_angles = pred_lattice[:, :3], pred_lattice[:, 3:]
-
-
-        pred_frac_block = ret['frac_coords']
-        pred_cart_block = frac_to_cart_coords(
-            pred_frac_block,
-            pred_lengths,
-            pred_angles,
-            batch.num_atoms
-        )
-
-        pred_rotmat = ret['rotmats']
-
-        pred_coords = self._assemble_coords(batch.local_coords, pred_rotmat, pred_cart_block, batch.bb_num_vec)
-
-        elapsed = time.time() - now
-
-        gt_ret_block = self.to_datalist_fg(batch.lattice_1, batch.trans_1, batch.num_atoms, batch.num_graphs)
-        pred_ret_block = self.to_datalist_fg(pred_lattice, pred_cart_block, batch.num_atoms, batch.num_graphs)
-        res_block = self.get_res(gt_ret_block, pred_ret_block, batch.num_graphs, batch_idx, 'block')
-
-        gt_ret_atom = self.to_datalist(batch.lattice_1, batch.gt_coords, batch.atom_types, batch.bb_num_vec, batch.batch, batch.num_graphs)
-        pred_ret_atom = self.to_datalist(pred_lattice, pred_coords, batch.atom_types, batch.bb_num_vec, batch.batch, batch.num_graphs)
-        res_atom = self.get_res(gt_ret_atom, pred_ret_atom, batch.num_graphs, batch_idx, 'atom')
-
-        for k in res_block:
-            # Save results
-            self.results.append({
-                'sample_idx': k,
-                'rms_dist_block': res_block[k],
-                'rms_dist_atom': res_atom[k],
-                'time': elapsed / batch.num_graphs
-            })
+        self.results.append(ret)
 
 
 
@@ -427,24 +384,9 @@ class CrysBFN_PL_Model(BaseModule):
 
         if dist.get_rank() == 0:
             all_results = [item for sublist in all_results for item in sublist]
-            all_df = pd.DataFrame(all_results)
-            all_df = all_df.sort_values(by='sample_idx')
-        
-            # Compute average metrics
-            results = {}
-            for suf in ['block', 'atom']:
-                rms_dist = all_df[f'rms_dist_{suf}'].dropna()
-                match_rate = len(rms_dist) / len(all_df) * 100
-                results.update({
-                    f'match_rate_{suf}': match_rate,
-                    f'rms_dist_{suf}': rms_dist.mean() if len(rms_dist) > 0 else None,
-                    'avg_time': all_df['time'].dropna().mean()
-                })
 
-            # Save average metrics to JSON
-            print(f"INFO:: {results}")
-            with open(os.path.join(self.inference_dir, 'average.json'), 'w') as f:
-                json.dump(results, f)
+            ks = all_results[0].keys()
 
-            # Save results to CSV
-            all_df.to_csv(os.path.join(self.inference_dir, 'results.csv'), index=False)
+            ret = {k:torch.cat([item[k] for item in all_results], dim=0) for k in ks}
+
+            torch.save(ret, os.path.join(self.inference_dir, f'raw_results.pt'))
