@@ -114,9 +114,11 @@ python -m postprocess.uff_relax --input <cfg_dir>/bond_samples
 python -m evaluation.property --cif_dir <cfg_dir>/bond_samples/relaxed
 ```
 
+We have also provided the [raw data](https://doi.org/10.6084/m9.figshare.31177066) of DNG results for future studies.
+
 ## Acknowledgments
 
-The main framework of this codebase is build upon [CrysBFN](https://github.com/wu-han-lin/CrysBFN) and [MOFFlow](https://github.com/nayoung10/MOFFlow). Raw datasets, benchmarks, and evaluations are partially sourced from [MOFDiff](https://github.com/microsoft/MOFDiff) and [MOFFlow](https://github.com/nayoung10/MOFFlow).
+The main framework of this codebase is built upon [CrysBFN](https://github.com/wu-han-lin/CrysBFN) and [MOFFlow](https://github.com/nayoung10/MOFFlow). Raw datasets, benchmarks, and evaluations are partially sourced from [MOFDiff](https://github.com/microsoft/MOFDiff) and [MOFFlow](https://github.com/nayoung10/MOFFlow).
 
 ## Citation
 
